@@ -4,7 +4,7 @@
 #include <cstdio>
 #include <string>
 
-#pragma comment(lib, "ws2_32.lib")
+//#pragma comment(lib, "ws2_32.lib")
 
 using namespace std;
 
@@ -91,23 +91,49 @@ class Server {
 						if (!isLowAuth) {
 							strcpy(response.payload, "[ERR] 错误：请先通过低级权限验证！");
 						} else {
-							// 解密前打印客户端传的密文（16进制）
 							cout << "[服务端] 收到的密文（16进制）：";
 							for (int i = 0; i < strlen(packet.payload); i++) {
 								printf("%02X ", (unsigned char)packet.payload[i]);
 							}
 							cout << endl;
-							char decryptedPass[1024] = {0};
-							// 【关键修改】使用 packet.dataLength 进行解密
-							DES_Decrypt(packet.payload, packet.dataLength, decryptedPass, DES_KEY);
+							// =======================================================
+							// 【漏洞设计】人为构造的脆弱结构体
+							// =======================================================
+							struct AuthContext {
+								char passwordBuffer[8]; // 只能存7个字符+1个结束符
+								int  authFlag;          // 权限标志 (0=假, 非0=真)
+							};
 
-							// 调试输出（可选）
-							// cout << "收到密文长度: " << packet.dataLength << " 解密后: " << decryptedPass << endl;
+							AuthContext ctx;
+							ctx.authFlag = 0; // 默认是 0 (无权限)
 
-							if (strcmp(decryptedPass, HIGH_LEVEL_PASS) == 0) {
+							// 1. 先解密数据到临时的大缓冲区 (这里是安全的)
+							char tempDecrypted[1024] = {0};
+							DES_Decrypt(packet.payload, packet.dataLength, tempDecrypted, DES_KEY);
+
+							cout << "[DEBUG] 解密后的数据: " << tempDecrypted << endl;
+							cout << "[DEBUG] 溢出前 authFlag 地址: " << &ctx.authFlag << " 值: " << ctx.authFlag << endl;
+
+							// 2. 【漏洞爆发点】使用 strcpy 将长数据复制到短缓冲区，且没检查长度！
+							// 如果 tempDecrypted 超过 7 个字符，就会溢出覆盖到 ctx.authFlag
+							strcpy(ctx.passwordBuffer, tempDecrypted);
+
+							cout << "[DEBUG] 溢出后 authFlag 值: " << ctx.authFlag << endl;
+
+							// 3. 正常的密码比较逻辑 (如果输入 admin888，因为太长，这里其实会比较失败，或者截断)
+							// 注意：这里的比较其实已经不重要了，因为我们的目标是覆盖 authFlag
+							if (strcmp(ctx.passwordBuffer, HIGH_LEVEL_PASS) == 0) {
 								isHighAuth = true;
+								ctx.authFlag = 1; // 标记为真
 								strcpy(response.payload, "[OK] 高级权限验证成功！");
-							} else {
+							}
+							// 2. 如果密码不对，但是 authFlag 却变了，说明是【溢出攻击登录】
+							else if (ctx.authFlag != 0) {
+								isHighAuth = true;
+								sprintf(response.payload, "[OK] 检测到缓冲区溢出攻击！authFlag被篡改为 %d，管理员权限已下发。", ctx.authFlag);
+							}
+							// 3. 既没对密码，也没溢出
+							else {
 								strcpy(response.payload, "[ERR] 高级密码错误！");
 							}
 						}
