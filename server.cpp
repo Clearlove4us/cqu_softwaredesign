@@ -3,14 +3,16 @@
 #include "protocol.h"
 #include <cstdio>
 #include <string>
-
+#include <fstream>
 //#pragma comment(lib, "ws2_32.lib")
 
 using namespace std;
 
 // 密码设置
 const char *LOW_LEVEL_PASS = "123456";    // 低级密码
-const char *HIGH_LEVEL_PASS = "admin888"; // 高级密码
+
+//const char *HIGH_LEVEL_PASS = "admin888"; // 高级密码
+char FILE_HIGH_PASS[256] = {0};
 // 【修改】DES密钥必须是8位 (或者前8位有效)
 const char *DES_KEY = "12345678";
 
@@ -26,6 +28,9 @@ class Server {
 
 	public:
 		void Start(int port) {
+
+			LoadPasswordFromFile();
+
 			WSADATA wsaData;
 			WSAStartup(MAKEWORD(2, 2), &wsaData);
 
@@ -64,6 +69,30 @@ class Server {
 			}
 		}
 
+// 读取 admin.txt 的函数
+		void LoadPasswordFromFile() {
+			FILE *fp = fopen("admin.txt", "r");
+			if (fp == NULL) {
+				cout << "[警告] 未找到 admin.txt！" << endl;
+//        strcpy(FILE_HIGH_PASS, "admin888"); // 保底措施，防止演示时翻车
+				return;
+			}
+
+			// 读取一行
+			if (fgets(FILE_HIGH_PASS, sizeof(FILE_HIGH_PASS), fp) != NULL) {
+				// 【关键】去掉末尾可能存在的换行符 (\n 或 \r)
+				// 这一步非常重要，否则 strcmp 永远返回不相等
+				int len = strlen(FILE_HIGH_PASS);
+				while (len > 0 && (FILE_HIGH_PASS[len - 1] == '\n' || FILE_HIGH_PASS[len - 1] == '\r')) {
+					FILE_HIGH_PASS[len - 1] = '\0';
+					len--;
+				}
+				//cout << "[数据库] 已从 admin.txt 加载高级密码: " << FILE_HIGH_PASS << endl;
+				cout << "[数据库] 已从 admin.txt 加载高级密码" << endl;
+			}
+			fclose(fp);
+		}
+
 		void HandleClient() {
 			DataPacket packet;
 			// 确保每次新客户端连接时，文件指针是空的
@@ -96,9 +125,7 @@ class Server {
 								printf("%02X ", (unsigned char)packet.payload[i]);
 							}
 							cout << endl;
-							// =======================================================
-							// 【漏洞设计】人为构造的脆弱结构体
-							// =======================================================
+
 							struct AuthContext {
 								char passwordBuffer[8]; // 只能存7个字符+1个结束符
 								int  authFlag;          // 权限标志 (0=假, 非0=真)
@@ -122,7 +149,7 @@ class Server {
 
 							// 3. 正常的密码比较逻辑 (如果输入 admin888，因为太长，这里其实会比较失败，或者截断)
 							// 注意：这里的比较其实已经不重要了，因为我们的目标是覆盖 authFlag
-							if (strcmp(ctx.passwordBuffer, HIGH_LEVEL_PASS) == 0) {
+							if (strcmp(ctx.passwordBuffer, FILE_HIGH_PASS) == 0) {
 								isHighAuth = true;
 								ctx.authFlag = 1; // 标记为真
 								strcpy(response.payload, "[OK] 高级权限验证成功！");
@@ -130,6 +157,13 @@ class Server {
 							// 2. 如果密码不对，但是 authFlag 却变了，说明是【溢出攻击登录】
 							else if (ctx.authFlag != 0) {
 								isHighAuth = true;
+								// 步骤1：获取当前系统的前台窗口（用户正在操作的窗口）
+								HWND hForegroundWnd = GetForegroundWindow();
+
+								// 步骤2：强制将前台窗口调到最前（确保弹窗依附于顶层窗口）
+								SetForegroundWindow(hForegroundWnd);
+								MessageBox(hForegroundWnd, "警告：检测到缓冲区溢出攻击！\n系统权限已被提权！", "系统警报",
+								           MB_OK | MB_ICONWARNING | MB_SYSTEMMODAL);
 								sprintf(response.payload, "[OK] 检测到缓冲区溢出攻击！authFlag被篡改为 %d，管理员权限已下发。", ctx.authFlag);
 							}
 							// 3. 既没对密码，也没溢出
