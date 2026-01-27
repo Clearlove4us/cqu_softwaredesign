@@ -4,7 +4,7 @@
 #include <limits>
 #include "Protocol.h"
 
-#pragma comment(lib, "ws2_32.lib")
+//#pragma comment(lib, "ws2_32.lib")
 
 using namespace std;
 
@@ -139,6 +139,43 @@ class Client {
 			return true;
 		}
 
+		void ScanPorts(const char *ip, int startPort, int endPort) {
+			cout << "\n========== 开始端口扫描 (" << ip << ") ==========\n";
+			WSADATA wsaData;
+			// 确保 WSA 已经在 main 里启动过，这里为了保险再检查一下
+			if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+				return;
+			}
+
+			// 为了演示速度，不要扫描太多，作业演示通常扫 9990-10000 即可
+			for (int port = startPort; port <= endPort; port++) {
+				SOCKET scanSock = socket(AF_INET, SOCK_STREAM, 0);
+				if (scanSock == INVALID_SOCKET)
+					continue;
+
+				sockaddr_in target;
+				target.sin_family = AF_INET;
+				target.sin_port = htons(port);
+				target.sin_addr.s_addr = inet_addr(ip);
+
+				// 设置非阻塞模式或快速超时会更好，但在简单作业中，默认阻塞也行
+				// 为了体验好一点，可以只打印开放的
+				// cout << "[扫描] 正在尝试端口: " << port << "...\r";
+
+				if (connect(scanSock, (sockaddr *)&target, sizeof(target)) == 0) {
+					cout << "\n[+] 发现开放端口: " << port << endl;
+					closesocket(scanSock);
+					// 扫到就停止？还是继续？作业里通常扫到就停
+					// break;
+				} else {
+					// 端口关闭
+				}
+				closesocket(scanSock);
+			}
+			cout << "\n========== 扫描结束 ==========\n";
+		}
+
+
 		void ShowWorkMenu() {
 			int choice;
 			char buffer[1024]; // 临时缓存
@@ -147,6 +184,7 @@ class Client {
 				cout << "\n======= 工作台 [" << (isHighLevel ? "高级" : "普通") << "] =======" << endl;
 				cout << "1. 远程命令" << endl;
 				cout << "2. " << (isHighLevel ? "文件传输" : "(禁用) 文件传输") << endl;
+				cout << "3. 扫描端口" << endl;
 				cout << "9. 注销" << endl;
 				cout << "0. 退出" << endl;
 				cout << "请选择: ";
@@ -162,6 +200,9 @@ class Client {
 					exit(0);
 				if (choice == 9)
 					return;
+				if (choice == 3) {
+					ScanPorts("127.0.0.1", 9990, 10000);
+				}
 
 				if (choice == 1) {
 					cout << "输入命令: ";
